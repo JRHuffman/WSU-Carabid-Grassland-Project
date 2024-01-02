@@ -1,0 +1,384 @@
+---
+title: Performing a NMDS on Ground Beetle Communities
+---
+
+# NMDS on Ground Beetle Communities
+
+*By Jake Huffman*
+
+```{r}
+library(vegan)
+library(ggplot2)
+library(mvabund)
+library(reshape2)
+library(indicspecies)
+library(bbplot)
+```
+
+## Importing and Organizing the Data
+
+Before we do anything, we must import the data set (you will have to do this manually):
+
+```{r}
+carabid.data <- read.csv("C:/Users/jakef/Downloads/Business/School/fall2022/research/insects/-- Poster Data/CarabidData.csv")
+```
+
+While we have the entire data set imported, we will need to separate it into two data frames like the dune example, one with the species data, and one with the environmental data.
+
+> CP2 and CP25 are not numeric, they are factors, so we set them as such.
+
+```{r}
+carabid.spp <- carabid.data[10:57]
+carabid.env <- carabid.data[1:9]
+
+colnames(carabid.env)[which(names(carabid.env)=="Burn2017")]<- "Burn"
+carabid.env$CP2_CP25 <- as.factor(carabid.env$CP2_CP25)
+```
+
+### What is this Dataset?
+
+Data were collected from 108 Conservation Reserve Program (CRP) sites in Kansas across a precipitation gradient (45.7-109.2 cm) using pitfall traps in the summers of 2017 and 2018 to quantify community interactions with Conservation Practices and environmental factors.
+
+> carabid.spp is a data-frame that includes 48 different species of ground beetles.
+>
+> carabid.env is a data-frame including 9 variables:
+>
+> -   Year: the provided file consists of data from 2017 alone, so this variable does not have any significance here.
+>
+> -   Site: each site was given a letter (W, C, or E) based on the region it is located, as well as an arbitrary number.
+>
+> -   CP2/CP25: Conservation Practices 2 and 25 are procedures
+>
+> -   Grazed/Ungrazed: whether or not the plot was grazed during 2017 and 2018.
+>
+> -   Burn2017: whether the field was burned in 2017. Done almost exclusively in eastern Kansas.
+>
+> -   Isocline: the 30-year average precipitation values for each site (cm).
+>
+> -   PlantBiomass: the average estimate of plant biomass in each site (g).
+>
+> -   LitterDepth: the average depth of litter of each site using a ruler (cm).
+>
+> -   Habitat Designation: the USDA Habitat Designations for each site.
+
+## A Key Distinction: Non-Parametric Tests
+
+Both the NMDS and PERMANOVA are non-parametric, which make them extremely versatile tools for multivariate analysis. Being non-parametric means that these tests do not rely on normally distributed data, which is useful in ecology as data is rarely normal.
+
+## Running the NMDS
+
+Non-metric Multidimensional Scaling is an ordination technique that attempts to reduce a high-dimension data set into a lower-dimension one while finding a stable solution that results in a low **stress** value, meaning it has successfully reduced the dimensionality of the data after many iterations, trying to find the lowest possible local stress value.
+
+*But what is a "dimension"?*
+
+<div>
+
+Each species is one dimension. In simple statistical tests, you deal with one or two dependent variables.
+
+Perhaps you are looking at ground beetles as a whole and how precipitation affects abundance. Then you could graph your dependent variable (ground beetle abundance) by your independent variable (precipitation).
+
+Consider what graphing two dependent variables would look like. The abundance of two ground beetles against each other, for example.
+
+Now consider graphing three species' abundances on the x, y, and z axes. This is harder to conceptualize. Now imagine graphing the 48 different species of ground beetles... and that's what an NMDS is doing.
+
+The NMDS places points (sites and species) in two dimensions, and then evaluates the relationships between points in this two-dimensional space versus the 48-dimensional space until it finds a plot that has a low enough stress value, meaning that the 2D and 48D graphs are fairly similar.
+
+I highly recommend this blog post by John Lefcheck:
+
+<https://jonlefcheck.net/2012/10/24/nmds-tutorial-in-r/>
+
+</div>
+
+Now we can run the NMDS.
+
+```{r}
+set.seed(172)
+carabid.nmds <- metaMDS(carabid.spp, distance="bray", k=3, trymax=100)
+```
+
+**set.seed()** is a command that sets the seed of the NMDS. This is done for the sake of repeatability--- if you change the number from **17** to 16, you will find that it will find a local minimum of 0.121216, but 17 will find 0.1212149. While these values are only marginally different, it can sometimes result in not finding a low enough stress value with the wrong random seed.
+
+So what did we just run? **metaMDS()** from **vegan** is a complicated function that calls multiple other functions to give us the result, but here is a *general* breakdown of what's happening:
+
+metaMDS(carabid.spp, distance="bray", k=3)
+
+-   distance="bray" - this is the Bray-Curtis Dissimilarity Index, which is calculated for all values.
+-   k=3 - this is the number of dimensions we wish the NMDS to simplify to. 2 Dimensions is optimal, but multivariate data is complex and increasing the dimensionality increases the flexibility to stress. It is recommended to not go past three dimensions as you lose the purpose of an NMDS.
+-   trymax - while not used here, the default amount of iterations the NMDS will run is 20. Increasing this value means more iterations and the possibility of finding a lower stress value, but it will take longer.
+
+Above, we've discussed the arguments that you are most likely to change, but there's a lot going on behind the scenes:
+
+1.  Transformation: metaMDS automatically transforms the data using a Wisconsin double standardization and a square root transformation. There are arbitrary triggers that cause the function to do this, but it does generally improve the quality of the NMDS. If you desire to transform the data by hand, you can turn it off using the argument: `autotransform = FALSE`.
+
+2.  It performs the dissimilarity index provided. By default it is Bray-Curtis because it is a good general index, but it can be set manually.
+
+3.  Not done here, but it can perform step-across dissimilarities which can provide better results "if a large proportion of sites have no shared species." Read the documentation for more.
+
+4.  metaMDS uses a random seed (or one given using **set.seed()**) to find the lowest stress value.
+
+5.  The results are scaled to best fit a graph. Since a NMDS provides no evidence as to *how much* things are related, this is a nicety that helps with graphing.
+
+6.  Species are given scores in relation to each site once the NMDS has placed everything in relation to each other.
+
+## Preparing to Graph
+
+Unlike the assignment you all performed, to best graph the results using ggplot2 we need to take the "scores" from the NMDS which are the positions of each site or species on the scatter plot. We need to separate the sites and species to graph them differently.
+
+```{r}
+sites.scores <- as.data.frame(scores(carabid.nmds, "sites"))
+sites.scores$site <- rownames(sites.scores)
+species.scores <- as.data.frame(scores(carabid.nmds, "species"))
+species.scores$species <- rownames(species.scores)
+```
+
+There are 48 species in this data set. To visually show every single one would be... messy. So we will only take the top ten species by abundance.
+
+```{r}
+species.scores <- species.scores[c('CycSod',"PasPun","PasElo","TetVir","CycTor","PasCal","HarCal","CicPun","PtePer","CycSub","CalOpa"),]
+```
+
+### Adding Environmental Variables
+
+So now, we have the sites *and* the species positions that we want, but unlike the pre-tutorial, we want to fit the environmental variables on top of the sites and species. We will use the fittingly named **envfit** from **vegan** to calculate the positions of environmental variables.
+
+-   Env.continuous contains the continuous independent variables we have: Isocline, PlantBiomass, and LitterDepth.
+
+-   Env.factor contains the independent variables that are factors: Habitat, CP2/CP25, Grazing, and Burns.
+
+```{r}
+env <- envfit(carabid.nmds,carabid.env[3:9])
+env.continuous <- as.data.frame(scores(env, "vectors"))* ordiArrowMul(env)
+env.factor <- as.data.frame(scores(env, "factors"))
+```
+
+We'll do a little bit of organization with the names of the variables to make the graph a bit more presentable:
+
+```{r}
+row.names(env.continuous) <- c("Precipitation", "Plant Biomass", "Litter Depth")
+row.names(env.factor) <- c("CP2","CP25","Grazed","Ungrazed","Unburned","Burned","Mixed","Sand","Short","Tall")
+```
+
+## Graphing
+
+With all of the tidy-work done, we can now get to work with **ggplot2**:
+
+```{r}
+carabid.plot <- ggplot(data=sites.scores, aes(x=NMDS1, y=NMDS2))+
+  geom_point(data=sites.scores, aes(color=carabid.env$HabitatDesignation))+
+  geom_segment(aes(x=0,y=0, xend=NMDS1, yend=NMDS2), data=env.continuous,arrow=arrow(length=unit(0.05, "inches"),ends = "last"))+
+  geom_text(data=env.continuous,aes(x=NMDS1, y=NMDS2), label=row.names(env.continuous), vjust=-1)+
+  geom_text(data=env.factor, label=row.names(env.factor))+
+  geom_text(data=species.scores,aes(x=NMDS1, y=NMDS2),alpha=0.3, label=species.scores$species) +
+  stat_ellipse(data=sites.scores, mapping=aes(x=NMDS1,y=NMDS2, color=carabid.env$HabitatDesignation))+
+  labs (color="Habitat", caption=paste("stress= ", carabid.nmds$stress))
+carabid.plot
+```
+
+I would recommend opening this graph in a new window.
+
+------------------------------------------------------------------------
+
+### What We Graphed:
+
+`carabid.plot <- ggplot(data=sites.scores, aes(x=NMDS1, y=NMDS2))`
+
+-   We are using the scores of the sites with the axes of the NMDS for our graph.
+
+`geom_point(data=sites.scores, aes(color=carabid.env$HabitatDesignation))`
+
+-   We are creating each point on the graph with the color according to their Habitat.
+
+`geom_segment(aes(x=0,y=0, xend=NMDS1, yend=NMDS2), data=env.continuous, arrow= arrow(length= unit(0.05, "inches"), ends = "last"))`
+
+-   We are creating the arrows for the continuous environmental variables.
+
+`geom_text(data=env.continuous,aes(x=NMDS1, y=NMDS2), label=row.names (env.continuous), vjust=-1)`
+
+-   We are adding the labels for the continuous variables based on their row names, with vjust=-1 moving them 1 unit *away* from the end of the vector.
+
+`geom_text(data=env.factor, label=row.names(env.factor))`
+
+-   We are adding the labels for variables that are factors (eg. CP2/CP25).
+
+`geom_text(data=species.scores,aes(x=NMDS1, y=NMDS2),alpha=0.3, label=species.scores$species)`
+
+-   We are adding the labels for the 10 most abundant species present. alpha=0.3 causes them to be semi-transparent.
+
+`stat_ellipse(data=sites.scores,mapping=aes(x=NMDS1,y=NMDS2,color=carabid.env$HabitatDesignation))`
+
+-   We are adding the ellipses based on the Habitats.
+
+`labs (color="Habitat", caption=paste("stress=", carabid.nmds$stress))`
+
+-   We are cleaning up the Legend name as well as including the final stress value for the NMDS.
+
+------------------------------------------------------------------------
+
+Other than having a low stress value, we want to make sure our NMDS follows its one assumption: monotonicity. Is the data always increasing/decreasing? If so, we are fine. Data should not increase, then decrease, then increase again. One way to visualize this is via the **stressplot()** function:
+
+```{r}
+stressplot(carabid.nmds)
+```
+
+As you can see, the NMDS results are consistently increasing and is thus monotonic.
+
+# PERMANOVA and PERMDISP
+
+To obtain statistical values that are more definitive than a NMDS, we need to perform a Permutational Multivariate Analysis of Variance (PERMANOVA). This is very similar to an ANOVA, but is multivariate and has multiple iterations or permutations to obtain the values it returns.
+
+Like **metaMDS()**, **adonis2()** can create our dissimilarity index for us using the argument `method="bray"`.
+
+Thankfully we can batch run all of the PERMANOVAs we want in a single line of code using **adonis2**:
+
+```{r}
+adonis2(carabid.spp~HabitatDesignation+CP2_CP25+GrazedUngrazed+Burn+Isocline+PlantBiomass+LitterDepth+Year, data=carabid.env, method = "bray")
+```
+
+### What Our PERMANOVA Results Mean
+
+When looking at our PERMANOVA Results, the first thing to look at is the Pr(\>F) values. These are functionally equivalent to p-values, and the results are significant if it is \<= 0.05, denoted by an asterisk (\*). In this example, Habitat, Grazed/Ungrazed, Burn2017, Isocline, and Litter Depth are statistically significant.
+
+Other than the Pr(\>F) values, you should focus on the R2 values. These tell you how much variation is due to the variable. For example, HabitatDesignation has an R2 value of 0.219, and is responsible for 21.9% of the variation in ground beetle communities.
+
+### Cleaning Up Our NMDS
+
+Now that we have significant values for each variable, let's correct the graph we made before by removing everything that has a Pr(\>F) greater than 0.05:
+
+```{r}
+env.continuous <- env.continuous[-c(2,3),]
+
+carabid.plot = ggplot(data=sites.scores, aes(x=NMDS1, y=NMDS2))+
+  stat_ellipse(data=sites.scores, mapping=aes(x=NMDS1,y=NMDS2, color=carabid.env$HabitatDesignation))+
+  geom_point(data=sites.scores, aes(color=carabid.env$HabitatDesignation))+
+  geom_segment(aes(x=0,y=0, xend=NMDS1, yend=NMDS2), data=env.continuous,arrow=arrow(length=unit(0.05, "inches"),ends = "last"))+
+  geom_text(data=env.continuous,aes(x=NMDS1, y=NMDS2), label=row.names(env.continuous), vjust=-1)+
+  geom_point(x=0,y=0)+
+  labs(color="Habitat", caption=paste("stress= 0.14"))+
+  theme_gray()
+carabid.plot
+```
+
+And once we have the final graphic, we can save it using **ggsave**:
+
+```{r}
+ggsave("carabid.png", dpi=600, width=12, height=12, units="in", scale=0.6, limitsize=F)
+```
+
+### What is ggsave Doing?
+
+-   "Carabid.png" is the file name.
+
+-   dpi = 600 is setting the image quality higher than the default, which is good for posters.
+
+-   width and height are just the size of the image.
+
+-   units can be set as pixels ("px"), inches ("in"), centimeter ("cm"), or millimeters ("mm").
+
+-   Scale is multiplicative and resizes the entire image based on the value you set it as--- mess around with it and see how it saves the file differently.
+
+# Looking at the Habitats Individually
+
+So we've performed a NMDS and a PERMANOVA for the overall data, but we also want to see how each of the variables affect the habitats individually. Perhaps precipitation has a greater effect in one region than another?
+
+To do this, we will perform PERMANOVAs on data subset to the specific habitats:
+
+We'll begin with short-grass prairies by:
+
+-   Subsetting the data by its habitat.
+
+-   Creating the shortgrass prairie datasets for species and environmental variables.
+
+-   Running a PERMANOVA on each of the variables.
+
+```{r}
+carabid.short <- carabid.data[carabid.data$HabitatDesignation=="Short",]
+carabid.short.spp <- carabid.short[10:57]
+carabid.short.env <- carabid.short[1:9]
+
+adonis2(carabid.short.spp~CP2_CP25+GrazedUngrazed+Isocline+PlantBiomass+LitterDepth+Year, data=carabid.short.env, method="bray")
+```
+
+In this example, isocline (precipitation) is the largest determinant for variation in short-grass prairies for ground beetle communities. Below is the code for each habitat.
+
+Mixed-grass Prairies:
+
+```{r}
+carabid.mixed <- carabid.data[carabid.data$HabitatDesignation=="Mixed",]
+carabid.mixed.spp <- carabid.mixed[10:57]
+carabid.mixed.env <- carabid.mixed[1:9]
+
+adonis2(carabid.mixed.spp~CP2_CP25+GrazedUngrazed+Isocline+PlantBiomass+LitterDepth+Year, data=carabid.mixed.env, method="bray")
+```
+
+Tall-grass Prairies:
+
+```{r}
+carabid.tall <- carabid.data[carabid.data$HabitatDesignation=="Tall",]
+carabid.tall.spp <- carabid.tall[10:57]
+carabid.tall.env <- carabid.tall[1:9]
+
+adonis2(carabid.tall.spp~CP2_CP25+GrazedUngrazed+Burn2017+Isocline+PlantBiomass+LitterDepth+Year, data=carabid.tall.env, method="bray")
+```
+
+Sand Prairies:
+
+```{r}
+carabid.sand <- carabid.data[carabid.data$HabitatDesignation=="Sand",]
+carabid.sand.spp <- carabid.sand[10:57]
+carabid.sand.env <- carabid.sand[1:9]
+
+adonis2(carabid.sand.spp~CP2_CP25+GrazedUngrazed+Burn2017+Isocline+PlantBiomass+LitterDepth+Year, data=carabid.sand.env, method="bray")
+```
+
+### Testing the One Assumption of PERMANOVAs: Dispersion
+
+PERMANOVAs are a robust statistical technique that are somewhat influenced by overdispersion; if the data is overdispersed, you are more likely to get results that are significant, but in reality are not significant. As long as your Pr(\>F) values are **very** strong, then it isn't a huge issue, but it is worth noting.
+
+We can easily test this using the **vegan** command **betadisper()**:
+
+```{r}
+
+carabid.dist <- vegdist(carabid.spp, method="bray")
+permutest(betadisper(carabid.dist,carabid.env$HabitatDesignation))
+```
+
+You would want to do this for *every* variable in every PERMANOVA.
+
+```{r}
+carabid.spp.stand <-wisconsin(carabid.spp)
+carabid.spp.stand <- sqrt(carabid.spp.stand)
+
+adonis2(carabid.spp.stand~HabitatDesignation+CP2_CP25+GrazedUngrazed+Burn+Isocline+PlantBiomass+LitterDepth, data=carabid.env, method = "bray")
+
+
+
+carabid.sim <- with(carabid.env, simper(carabid.spp.stand, HabitatDesignation, permutations=999))
+carabid.sim
+summary(carabid.sim)
+
+meandist(vegdist(carabid.spp.stand), carabid.env$HabitatDesignation)
+mrpp(carabid.spp.stand,carabid.env$HabitatDesignation, distance="bray")
+
+```
+
+```{r}
+pcm <- melt(carabid.data, id=c("Year", "Site", "CP2_CP25", "GrazedUngrazed", "Burn2017", "Isocline", "PlantBiomass", "LitterDepth", "HabitatDesignation"))
+mx = ggplot(pcm, aes(x=HabitatDesignation,fill = variable, y = value))+
+  geom_point(aes(size=value, fill=HabitatDesignation, color=variable))
+
+    
+mx
+```
+
+```{r}
+
+carabid.val <- multipatt(carabid.spp, carabid.env$HabitatDesignation, control=how(nperm=999))
+summary(carabid.val, indvalcomp = T)
+
+
+
+carabid.value <- data.frame(Habitat=carabid.data$HabitatDesignation, CicPun=carabid.data$CicPun, CalOpa=carabid.data$CalOpa, CicScu=carabid.data$CicScu, PoeCha=carabid.data$PoeCha, TetVir=carabid.data$TetVir, HarCal=carabid.data$HarCal, PasCal=carabid.data$PasCal, PasPun=carabid.data$PasPun, PtePer=carabid.data$PtePer, CycTor=carabid.data$CycTor, PasElo=carabid.data$PasElo, CycSod=carabid.data$CycSod)
+
+carabid.mvalue <- melt(carabid.value, id="Habitat")
+
+```
