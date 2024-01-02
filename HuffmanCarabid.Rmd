@@ -20,7 +20,7 @@ library(bbplot)
 Before we do anything, we must import the data set (you will have to do this manually):
 
 ```{r}
-carabid.data <- read.csv("C:/Users/jakef/Downloads/Business/School/fall2022/research/insects/-- Poster Data/CarabidData.csv")
+carabid.data <- read.csv("CarabidData.csv")
 ```
 
 While we have the entire data set imported, we will need to separate it into two data frames like the dune example, one with the species data, and one with the environmental data.
